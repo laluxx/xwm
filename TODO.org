@@ -1,0 +1,32 @@
+#+title: Todo
+
+
+
+* TODO
+** True rotate_stack
+this rotate the entire stack
+#+begin_src c
+void rotate_stack(int direction) {
+    if (nwindows < 2) return; // No need to rotate for fewer than 2 windows.
+
+    Window temp;
+
+    if (direction == 1) { // Rotate forward
+        temp = windows[nwindows-1];  // Get the last window
+        // Shift every window forward
+        for (int i = nwindows-1; i > 0; i--) {
+            windows[i] = windows[i-1];
+        }
+        windows[0] = temp;  // Set the first window as the last window
+    } else if (direction == -1) { // Rotate backward
+        temp = windows[0];  // Get the first window
+        // Shift every window backward
+        for (int i = 0; i < nwindows-1; i++) {
+            windows[i] = windows[i+1];
+        }
+        windows[nwindows-1] = temp;  // Set the last window as the first window
+    }
+
+    focused_window = 0; // Focus should now be on the master window.
+}
+#+end_src

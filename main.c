@@ -6,6 +6,14 @@
 #include <unistd.h>
 #include "tags.h"
 
+#include <signal.h>
+#include <sys/wait.h>
+
+
+#define max(a, b) ((a) > (b) ? (a) : (b))
+#define min(a, b) ((a) < (b) ? (a) : (b))
+
+
 // Configuration
 float master_size_factor = 0.6;
 int gap = 10;
@@ -40,7 +48,6 @@ void focus_prev() {
     }
 }
 
-
 void tile() {
     int width = DisplayWidth(display, screen) - 2 * gap;
     int height = DisplayHeight(display, screen) - 2 * gap;
@@ -58,7 +65,6 @@ void tile() {
         }
     }
 }
-
 
 void remove_window(Window w) {
     int index = -1;
@@ -93,18 +99,57 @@ void close_focused() {
     }
 }
 
+void rotate_stack(int direction) {
+    if (nwindows < 2) return; // No need to swap for fewer than 2 windows.
+
+    int swap_index = -1;
+
+    if (direction == 1) {
+        // For Super + Shift + j
+        if (focused_window == nwindows - 1) {
+            swap_index = 0; // Wrap around to the first window.
+        } else {
+            swap_index = focused_window + 1; // Swap with the next window.
+        }
+    } else if (direction == -1) {
+        // For Super + Shift + k
+        if (focused_window == 0) {
+            swap_index = nwindows - 1; // Wrap around to the last window.
+        } else {
+            swap_index = focused_window - 1; // Swap with the previous window.
+        }
+    }
+
+    if (swap_index != -1) {
+        Window temp = windows[focused_window];
+        windows[focused_window] = windows[swap_index];
+        windows[swap_index] = temp;
+
+        // Move the focus to the swapped position.
+        focused_window = swap_index;
+    }
+}
+
 void handle_event(XEvent *event) {
     if (event->type == KeyPress) {
         KeySym keysym = XkbKeycodeToKeysym(display, event->xkey.keycode, 0, 0);
-        if ((event->xkey.state & Mod4Mask) && (keysym == XK_Return)) {
+
+        // Handle shift key combinations first
+        if ((event->xkey.state & Mod4Mask) && (event->xkey.state & ShiftMask) && (keysym == XK_j)) {
+            rotate_stack(1);  // Rotating the stack forward for Super + Shift + j
+            tile();
+        } else if ((event->xkey.state & Mod4Mask) && (event->xkey.state & ShiftMask) && (keysym == XK_k)) {
+            rotate_stack(-1);  // Rotating the stack backward for Super + Shift + k
+            tile();
+        } else if ((event->xkey.state & Mod4Mask) && (keysym == XK_Return)) {
             spawn("kitty");
         } else if ((event->xkey.state & Mod4Mask) && (keysym == XK_h)) {
-            master_size_factor -= 0.05;
+            master_size_factor = max(0.1, master_size_factor - 0.05);
             tile();
         } else if ((event->xkey.state & Mod4Mask) && (keysym == XK_p)) {
             spawn("dmrun");
         } else if ((event->xkey.state & Mod4Mask) && (keysym == XK_l)) {
-            master_size_factor += 0.05;
+            master_size_factor = min(0.9, master_size_factor + 0.05);
             tile();
         } else if ((event->xkey.state & Mod4Mask) && (keysym == XK_j)) {
             focus_next();
@@ -115,16 +160,24 @@ void handle_event(XEvent *event) {
         }
         handle_workspace_keys(event);
     } else if (event->type == MapRequest) {
-        windows = realloc(windows, (nwindows + 1) * sizeof(Window));
-        windows[nwindows++] = event->xmaprequest.window;
+        /* windows = realloc(windows, (nwindows + 1) * sizeof(Window)); */
+        /* windows[nwindows] = event->xmaprequest.window; */
+        /* XMapWindow(display, event->xmaprequest.window); */
+        /* // Set the newly opened window as the focused one. */
+        /* focused_window = nwindows; */
+        /* nwindows++; */
+        /* tile(); */
+
         XMapWindow(display, event->xmaprequest.window);
+        windows = realloc(windows, (nwindows + 1) * sizeof(Window));
+        windows[nwindows] = event->xmaprequest.window;
+        focused_window = nwindows;
+        nwindows++;
         tile();
     } else if (event->type == DestroyNotify) {
         remove_window(event->xdestroywindow.window);
     }
 }
-
-
 
 int main(void) {
     initialize_workspaces();
@@ -146,6 +199,10 @@ int main(void) {
     XGrabKey(display, XKeysymToKeycode(display, XK_j), Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);
     XGrabKey(display, XKeysymToKeycode(display, XK_k), Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);
     XGrabKey(display, XKeysymToKeycode(display, XK_q), Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);
+
+    XGrabKey(display, XKeysymToKeycode(display, XK_j), Mod4Mask | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);
+    XGrabKey(display, XKeysymToKeycode(display, XK_k), Mod4Mask | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);
+
 
     for (int i = XK_1; i <= XK_9; i++) {
         XGrabKey(display, XKeysymToKeycode(display, i), Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);

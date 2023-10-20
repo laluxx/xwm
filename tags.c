@@ -116,15 +116,23 @@ void send_window_to_workspace(Window w, int index) {
     tile();
 }
 
-
 void handle_workspace_keys(XEvent *event) {
     KeySym keysym = XkbKeycodeToKeysym(display, event->xkey.keycode, 0, 0);
 
-    if ((event->xkey.state & Mod4Mask) && !(event->xkey.state & ShiftMask) && keysym >= XK_1 && keysym <= XK_9) {
-        int index = keysym - XK_1;
+    if (keysym < XK_1 || keysym > XK_9) {
+        return; // Not a workspace key, so exit early.
+    }
+
+    int index = keysym - XK_1;
+
+    // If the key combination is for the current workspace, do nothing and return.
+    if (index == current_workspace) {
+        return;
+    }
+
+    if ((event->xkey.state & Mod4Mask) && !(event->xkey.state & ShiftMask)) {
         switch_to_workspace(index);
-    } else if ((event->xkey.state & (Mod4Mask | ShiftMask)) == (Mod4Mask | ShiftMask) && keysym >= XK_1 && keysym <= XK_9) {
-        int index = keysym - XK_1;
+    } else if ((event->xkey.state & (Mod4Mask | ShiftMask)) == (Mod4Mask | ShiftMask)) {
         if (nwindows > 0 && focused_window >= 0 && focused_window < nwindows) {
             send_window_to_workspace(windows[focused_window], index);
         }
