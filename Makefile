@@ -1,23 +1,17 @@
 CC = gcc
-CFLAGS = -Wall -Wextra
-LIBS = -lX11 -g
-OBJ = main.o tags.o
 
-all: xwm
+CFLAGS = -g -Wall
 
-xwm: $(OBJ)
-	$(CC) $(CFLAGS) -o $@ $(OBJ) $(LIBS)
+LDFLAGS = -lX11
 
-%.o: %.c
-	$(CC) $(CFLAGS) -c $< -o $@
+SRCS = xwm.c
+
+OUT = xwm
+
+all: $(OUT)
+
+$(OUT): $(SRCS) config.h
+	$(CC) $(CFLAGS) $(SRCS) -o $(OUT) $(LDFLAGS)
 
 clean:
-	rm -f *.o xwm
-
-install: xwm
-	sudo cp xwm /usr/bin/
-
-uninstall:
-	sudo rm -f /usr/bin/xwm
-
-.PHONY: all clean install uninstall
+	rm -f $(OUT)

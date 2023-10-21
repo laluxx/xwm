@@ -4,19 +4,13 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
-#include "tags.h"
-
-#include <signal.h>
-#include <sys/wait.h>
+#include <X11/Xutil.h>
+#include "config.h"
 
 
 #define max(a, b) ((a) > (b) ? (a) : (b))
 #define min(a, b) ((a) < (b) ? (a) : (b))
 
-
-// Configuration
-float master_size_factor = 0.6;
-int gap = 10;
 
 // Globals
 Display *display;
@@ -26,6 +20,171 @@ int screen;
 int focused_window = 0;
 Window* windows = NULL;
 int nwindows = 0;
+
+
+
+
+// Layouts
+void tile() {
+    int width = DisplayWidth(display, screen) - 2 * gap;
+    int height = DisplayHeight(display, screen) - 2 * gap;
+
+    if (nwindows == 1) {
+        XMoveResizeWindow(display, windows[0], gap, gap, width, height);
+    } else if (nwindows > 1) {
+        int master_width = mfact * width;
+        int slave_width = width - master_width - gap;
+        int slave_height = (height - (nwindows - 2) * gap) / (nwindows - 1);
+
+        XMoveResizeWindow(display, windows[0], gap, gap, master_width, height);
+        for (int i = 1; i < nwindows; ++i) {
+            XMoveResizeWindow(display, windows[i], master_width + 2 * gap, gap + (i - 1) * (slave_height + gap), slave_width, slave_height);
+        }
+    }
+}
+
+
+
+
+
+
+
+// WORKSPACES
+typedef struct {
+    Window* windows;
+    int nwindows;
+    int focused_window;
+} Workspace;
+
+Workspace workspaces[NUM_WORKSPACES];
+
+Bool window_exists(Display *disp, Window w) {
+    XWindowAttributes wa;
+    return (XGetWindowAttributes(disp, w, &wa) != 0);
+}
+
+void initialize_workspaces() {
+    for (int i = 0; i < NUM_WORKSPACES; i++) {
+        workspaces[i].windows = NULL;
+        workspaces[i].nwindows = 0;
+        workspaces[i].focused_window = 0;
+    }
+}
+
+void map_workspace(int index) {
+    Workspace* ws = &workspaces[index];
+    for (int i = 0; i < ws->nwindows; i++) {
+        if (window_exists(display, ws->windows[i])) {
+            XMapWindow(display, ws->windows[i]);
+        }
+    }
+    tile();
+}
+
+void unmap_workspace(int index) {
+    Workspace* ws = &workspaces[index];
+    for (int i = 0; i < ws->nwindows; i++) {
+        if (window_exists(display, ws->windows[i])) {
+            XUnmapWindow(display, ws->windows[i]);
+        }
+    }
+}
+
+void switch_to_workspace(int index) {
+    if (index < 0 || index >= NUM_WORKSPACES) return;
+
+    // 1. Store the current windows in the old workspace
+    workspaces[current_workspace].windows = windows;
+    workspaces[current_workspace].nwindows = nwindows;
+    workspaces[current_workspace].focused_window = focused_window;
+
+    unmap_workspace(current_workspace);
+    current_workspace = index;
+
+    windows = workspaces[current_workspace].windows;
+    nwindows = workspaces[current_workspace].nwindows;
+    focused_window = (nwindows > 0) ? workspaces[current_workspace].focused_window : 0;
+
+    map_workspace(current_workspace);
+}
+
+void send_window_to_workspace(Window w, int index) {
+    // Validation: check the workspace index and window existence.
+    if (index < 0 || index >= NUM_WORKSPACES || !window_exists(display, w))
+        return;
+
+    // Hide the window.
+    XUnmapWindow(display, w);
+
+    // Add the window to the target workspace.
+    Workspace* target_ws = &workspaces[index];
+    Window* tmp = realloc(target_ws->windows, (target_ws->nwindows + 1) * sizeof(Window));
+    if (!tmp) {
+        // Allocation error.
+        return;
+    }
+    target_ws->windows = tmp;
+    target_ws->windows[target_ws->nwindows++] = w;
+
+    // Remove the window from the current workspace.
+    int window_found = -1;
+    for (int i = 0; i < nwindows; i++) {
+        if (windows[i] == w) {
+            window_found = i;
+            break;
+        }
+    }
+
+    // If the window is found in the current workspace, remove it.
+    if (window_found != -1) {
+        // Shift the remaining windows to the left to fill the gap.
+        for (int j = window_found; j < nwindows - 1; j++) {
+            windows[j] = windows[j + 1];
+        }
+        nwindows--;
+
+        // Reallocate the windows array to its new size.
+        Window* new_windows = realloc(windows, nwindows * sizeof(Window));
+        if (!new_windows) {
+            // Allocation error.
+            return;
+        }
+        windows = new_windows;
+
+        // Update the focused window index.
+        if (focused_window == window_found && nwindows > 0) {
+            focused_window = 0;
+        } else if (focused_window > window_found) {
+            focused_window--;
+        }
+    }
+
+    // Re-tile the current workspace windows.
+    tile();
+}
+
+void handle_workspace_keys(XEvent *event) {
+    KeySym keysym = XkbKeycodeToKeysym(display, event->xkey.keycode, 0, 0);
+
+    if (keysym < XK_1 || keysym > XK_9) {
+        return; // Not a workspace key, so exit early.
+    }
+
+    int index = keysym - XK_1;
+
+    // If the key combination is for the current workspace, do nothing and return.
+    if (index == current_workspace) {
+        return;
+    }
+
+    if ((event->xkey.state & Mod4Mask) && !(event->xkey.state & ShiftMask)) {
+        switch_to_workspace(index);
+    } else if ((event->xkey.state & (Mod4Mask | ShiftMask)) == (Mod4Mask | ShiftMask)) {
+        if (nwindows > 0 && focused_window >= 0 && focused_window < nwindows) {
+            send_window_to_workspace(windows[focused_window], index);
+        }
+    }
+}
 
 void spawn(const char* cmd) {
     if (fork() == 0) {
@@ -45,24 +204,6 @@ void focus_prev() {
     if (nwindows > 0) {
         focused_window = (focused_window - 1 + nwindows) % nwindows;
         XSetInputFocus(display, windows[focused_window], RevertToParent, CurrentTime);
-    }
-}
-
-void tile() {
-    int width = DisplayWidth(display, screen) - 2 * gap;
-    int height = DisplayHeight(display, screen) - 2 * gap;
-
-    if (nwindows == 1) {
-        XMoveResizeWindow(display, windows[0], gap, gap, width, height);
-    } else if (nwindows > 1) {
-        int master_width = master_size_factor * width;
-        int slave_width = width - master_width - gap;
-        int slave_height = (height - (nwindows - 2) * gap) / (nwindows - 1);
-
-        XMoveResizeWindow(display, windows[0], gap, gap, master_width, height);
-        for (int i = 1; i < nwindows; ++i) {
-            XMoveResizeWindow(display, windows[i], master_width + 2 * gap, gap + (i - 1) * (slave_height + gap), slave_width, slave_height);
-        }
     }
 }
 
@@ -130,6 +271,7 @@ void rotate_stack(int direction) {
     }
 }
 
+
 void handle_event(XEvent *event) {
     if (event->type == KeyPress) {
         KeySym keysym = XkbKeycodeToKeysym(display, event->xkey.keycode, 0, 0);
@@ -142,14 +284,14 @@ void handle_event(XEvent *event) {
             rotate_stack(-1);  // Rotating the stack backward for Super + Shift + k
             tile();
         } else if ((event->xkey.state & Mod4Mask) && (keysym == XK_Return)) {
-            spawn("kitty");
-        } else if ((event->xkey.state & Mod4Mask) && (keysym == XK_h)) {
-            master_size_factor = max(0.1, master_size_factor - 0.05);
-            tile();
+            spawn(terminalcmd);
         } else if ((event->xkey.state & Mod4Mask) && (keysym == XK_p)) {
-            spawn("dmrun");
+            spawn(dmenucmd);
+        } else if ((event->xkey.state & Mod4Mask) && (keysym == XK_h)) {
+            mfact = max(0.1, mfact - 0.05);
+            tile();
         } else if ((event->xkey.state & Mod4Mask) && (keysym == XK_l)) {
-            master_size_factor = min(0.9, master_size_factor + 0.05);
+            mfact = min(0.9, mfact + 0.05);
             tile();
         } else if ((event->xkey.state & Mod4Mask) && (keysym == XK_j)) {
             focus_next();
@@ -178,6 +320,12 @@ void handle_event(XEvent *event) {
         remove_window(event->xdestroywindow.window);
     }
 }
+
+
+
+
+
+
 
 int main(void) {
     initialize_workspaces();
